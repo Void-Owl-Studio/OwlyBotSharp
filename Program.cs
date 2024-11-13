@@ -24,7 +24,7 @@ async Task OnError(Exception exception, HandleErrorSource source)
 
 async Task OnMessage(Message msg, UpdateType type)
 {
-    if (msg.From!.Id == Int32.Parse(secretSection["Owner"]!))
+    if (msg.Chat.Id == Int32.Parse(secretSection["Owner"]!))
     {
         if (msg.Text == "/start")
             await bot.SendMessage(msg.Chat.Id, "Здесь будут сообщения от пользователей.");
@@ -35,7 +35,7 @@ async Task OnMessage(Message msg, UpdateType type)
         var replyMarkup = new ReplyKeyboardMarkup(true)
         .AddButton("Запостить в канал")
         */
-        var caption = $"<b>#тейк от <a href=\"tg://user?id={msg.From.Id}\">{msg.From.FirstName}</a></b>";
+        var caption = $"<b>#тейк от <a href=\"tg://user?id={msg.From!.Id}\">{msg.From.FirstName}</a></b>";
 
         await bot.CopyMessage(secretSection["Owner"]!, msg.Chat.Id, msg.Id,
         caption: caption, parseMode: ParseMode.Html);
