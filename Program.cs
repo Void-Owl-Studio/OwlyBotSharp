@@ -11,6 +11,7 @@ using var cts = new CancellationTokenSource();
 var bot = new TelegramBotClient(secretSection["Token"], cancellationToken: cts.Token);
 bot.OnError += OnError;
 bot.OnMessage += OnMessage;
+bot.OnUpdate += OnUpdate;
 
 Console.WriteLine("Bot is running... Press Enter to terminate");
 Console.ReadLine();
@@ -23,10 +24,10 @@ async Task OnError(Exception exception, HandleErrorSource source)
 
 async Task OnMessage(Message msg, UpdateType type)
 {
-    if (msg.From == secretSection["Owner"])
+    if (msg.userId == secretSection["Owner"])
     {
         if (msg.Text == "/start")
-            await bot.SendMessage(msg.Chat, "Здесь будут сообщения от пользователей.");
+            await bot.SendMessage(msg.chatId, "Здесь будут сообщения от пользователей.");
     }
     else
     {
@@ -34,9 +35,9 @@ async Task OnMessage(Message msg, UpdateType type)
         var replyMarkup = new ReplyKeyboardMarkup(true)
         .AddButton("Запостить в канал")
         */
-        var caption = $"<b>#тейк от <a href=\"tg://user?id={msg.Chat}\">{msg.From}</a></b>"
+        var caption = $"<b>#тейк от <a href=\"tg://user?id={msg.userId}\">{msg.FirstName}</a></b>"
 
-        await bot.CopyMessage(/*вставить ID чата owner'a*/, msg.Chat, msg.Id,
+        await bot.CopyMessage(secretSection["Owner"], msg.chatId, msg.Id,
         caption: caption, parseMode: ParseMode.Html);
     }
 }
