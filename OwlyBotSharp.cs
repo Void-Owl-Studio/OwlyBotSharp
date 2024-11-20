@@ -4,6 +4,7 @@ using Telegram.Bot;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types.ReplyMarkups;
+using Owl;
 
 var botConfig = new ConfigurationBuilder().AddIniFile("conf.ini").Build();
 var secretSection = botConfig.GetSection("Tokens");
@@ -12,19 +13,34 @@ var ownerNumber = Int64.Parse(secretSection["Owner"]!);
 var DBConnection = new SqliteConnection("Data Source=tgbot.db");
 DBConnection.Open();
 
+var er = new EventRouter();
+
 using var cts = new CancellationTokenSource();
 var bot = new TelegramBotClient(secretSection["Token"]!, cancellationToken: cts.Token);
-bot.OnMessage += OnMessage;
-bot.OnUpdate += OnUpdate;
+bot.OnError += async (exception, source) => await er.Push(new ErrEventArgs(exception, source));
+bot.OnMessage += async (msg, type) => await er.Push(new MsgEventArgs(msg, type));
+bot.OnUpdate += async (update) => await er.Push(new UpdEventArgs(update));
+
+er.Add(OnMessage, TEventType.Message);
+er.Add(OnUpdate, TEventType.Update);
+await er.Process();
 
 Console.WriteLine("Bot is running... Press Enter to terminate");
 Console.ReadLine();
 
 cts.Cancel();
+
+er.Stop();
+
 DBConnection.Close();
 
-async Task OnMessage(Message msg, UpdateType type)
+
+
+async Task OnMessage(TEventArgs a)
 {
+    Message msg = ((MsgEventArgs)a).msg;
+    UpdateType type = ((MsgEventArgs)a).type;
+
     if (msg.Chat.Id == ownerNumber)
     {
         if (msg.Text == "/start")
@@ -56,8 +72,10 @@ async Task OnMessage(Message msg, UpdateType type)
     }
 }
 
-async Task OnUpdate(Update update)
+async Task OnUpdate(TEventArgs a)
 {
+    Update update = ((UpdEventArgs)a).update;
+
     if (update is { CallbackQuery: { } query })
     {
         await bot.AnswerCallbackQuery(query.Id);
