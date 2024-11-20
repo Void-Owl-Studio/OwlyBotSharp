@@ -46,7 +46,7 @@ async Task OnMessage(Message msg, UpdateType type)
         .AddButton("Запостить", "post")
         .AddButton("Отклонить", "deny")
         .AddNewRow()
-        .AddButtons("Редактировать", "edit")
+        .AddButton("Редактировать", "edit")
         .AddButton("Забанить", "ban");
 
         var caption = $"<b>#тейк от <a href=\"tg://user?id={msg.From!.Id}\">{msg.From.FirstName}</a></b>";
