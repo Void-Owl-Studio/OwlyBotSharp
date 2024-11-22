@@ -1,44 +1,48 @@
 using System.Collections.Concurrent;
-using Telegram.Bot.Types;
-using Telegram.Bot.Types.Enums;
 
 namespace Owl
 {
-    sealed class EventRouter
+    public sealed class EventRouter<U, T> : IDisposable where U : IUpdateMsg<T> where T : IComparable
     {
-        private ConcurrentQueue<Update> Input;
+        private CancellationTokenSource TSource;
 
-        private List<EventHandler> Handlers;
+        private ConcurrentQueue<U> Input;
 
-        private long running = 0;
+        private List<EventHandler<U, T>> Handlers;
 
         public EventRouter()
         {
+            TSource = new();
             Input = new();
             Handlers = new();
         }
 
-        public async Task Push(Update upd) => await Task.Run(() => Input.Enqueue(upd));
-
-        public void Add(UpdateType ut, Func<Update, Task> handler, Func<Update, bool> cond)
+        public void Dispose()
         {
-            var h = new EventHandler(ut, handler, cond);
+            if (!TSource.IsCancellationRequested) TSource.Cancel();
+            TSource.Dispose();
+        }
+
+        public void Push(U upd) => Input.Enqueue(upd);
+
+        public void Add(T ut, Func<U, Task> handler, Func<U, bool> cond)
+        {
+            var h = new EventHandler<U, T>(ut, handler, cond);
             Handlers.Add(h);
         }
 
-        public async Task Process()
+        private void QueuePolling()
         {
-            Interlocked.Increment(ref running);
-            while (Interlocked.Read(ref running) == 1)
+            while (!TSource.IsCancellationRequested)
             {
-                Update? te;
+                U? te;
                 if (Input.TryDequeue(out te))
                 {
                     foreach (var h in Handlers)
                     {
-                        if(h.Type == te.Type && h.Cond(te))
+                        if (Equals(h.Type, te.Type) && h.Cond(te))
                         {
-                            try { await h.Handler(te); }
+                            try { Task.Run(() => h.Handler(te)); }
                             catch (Exception ex) { Console.WriteLine("Handler exited with exception: ", ex); }
                         }
                     }
@@ -46,20 +50,25 @@ namespace Owl
             }
         }
 
-        public void Stop() => Interlocked.Decrement(ref running);
+        public void Start() => Task.Run((Action)QueuePolling);
     }
 
-    struct EventHandler
+    struct EventHandler<U, T> where U : IUpdateMsg<T>
     {
-        public EventHandler(UpdateType _type, Func<Update, Task> _handler, Func<Update, bool> _cond)
+        public EventHandler(T _type, Func<U, Task> _handler, Func<U, bool> _cond)
         {
             Type = _type;
             Handler = _handler;
             Cond = _cond;
         }
 
-        public readonly UpdateType Type;
-        public readonly Func<Update, Task> Handler;
-        public readonly Func<Update, bool> Cond;
+        public readonly T Type {get;}
+        public readonly Func<U, Task> Handler {get;}
+        public readonly Func<U, bool> Cond {get;}
+    }
+
+    public interface IUpdateMsg<T>
+    {
+        public T Type => default!;
     }
 }

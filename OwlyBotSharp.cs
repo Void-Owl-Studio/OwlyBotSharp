@@ -1,5 +1,4 @@
 ﻿using Microsoft.Extensions.Configuration;
-using Microsoft.Data.Sqlite;
 using Telegram.Bot;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
@@ -10,15 +9,10 @@ var botConfig = new ConfigurationBuilder().AddIniFile("conf.ini").Build();
 var apiSection = botConfig.GetSection("API");
 var ownerNumber = Int64.Parse(apiSection["Owner"]!);
 
-var DBConnection = new SqliteConnection("Data Source=tgbot.db");
-DBConnection.Open();
-
-SpinLock DBSpinlock = new SpinLock();
-
 using var cts = new CancellationTokenSource();
 var bot = new TelegramBotClient(apiSection["Token"]!, cancellationToken: cts.Token);
 
-var er = new EventRouter();
+using var er = new EventRouter<TypedUpdate, UpdateType>();
 
 er.Add(UpdateType.Message, OnOwnerMessage, (u) => u.Message!.Chat.Id == ownerNumber);
 er.Add(UpdateType.Message, OnUserMessage, (u) => u.Message!.Chat.Id != ownerNumber);
@@ -32,7 +26,7 @@ er.Add(UpdateType.CallbackQuery, OnCallbackQuieryAdminEdit,
 er.Add(UpdateType.CallbackQuery, OnCallbackQuieryAdminBan,
        (u) => u.CallbackQuery!.Message!.Chat.Id == ownerNumber && u.CallbackQuery!.Data == "ban");
 
-await er.Process();
+er.Start();
 
 Console.WriteLine("Bot is running... Press Enter to terminate");
 
@@ -43,16 +37,12 @@ while (!cts.IsCancellationRequested)
     foreach (var upd in updates)
     {
         offset = upd.Id + 1;
-        await er.Push(upd);
+        er.Push((TypedUpdate)upd);
         if (cts.IsCancellationRequested) break;
     }
     if (Console.KeyAvailable)
         if (Console.ReadKey(true).Key == ConsoleKey.Enter) break;
 }
-
-er.Stop();
-
-DBConnection.Close();
 
 
 
@@ -71,38 +61,21 @@ async Task OnUserMessage(Update a)
 {
     Message msg = a.Message!;
 
-    int responce = 0;
+    var inlineMarkup = new InlineKeyboardMarkup()
+    .AddButton("Запостить", "post")
+    .AddButton("Отклонить", "deny")
+    .AddNewRow()
+    .AddButton("Редактировать", "edit")
+    .AddButton("Забанить", "ban");
 
-    bool lockTaken = false;
-    try
-    {
-        DBSpinlock.Enter(ref lockTaken);
-        var command = DBConnection.CreateCommand();
-        command.CommandText = "SELECT EXISTS(SELECT 1 FROM banned WHERE tid = $tid);";
-        command.Parameters.AddWithValue("$tid", msg.Chat.Id);
-        responce = (int)command.ExecuteScalar()!;
-    }
-    finally
-    {
-        if (lockTaken) DBSpinlock.Exit();
-    }
+    var caption = $"<b>#тейк от <a href=\"tg://user?id=\"{msg.Chat.Id}\"\">{msg.From!.FirstName}</a></b>";
 
-    if (responce == 0)
-    {
-        var inlineMarkup = new InlineKeyboardMarkup()
-        .AddButton("Запостить", "post")
-        .AddButton("Отклонить", "deny")
-        .AddNewRow()
-        .AddButton("Редактировать", "edit")
-        .AddButton("Забанить", "ban");
-
-        var forwarded = await bot.ForwardMessage(apiSection["Owner"]!, msg.Chat.Id, msg.MessageId);
-        await bot.SendMessage(apiSection["Owner"]!,
-                              "Выберите действие:",
-                              protectContent: true,
-                              replyParameters: forwarded!.MessageId,
-                              replyMarkup: inlineMarkup);
-    }
+    await bot.CopyMessage(apiSection["Owner"]!,
+                          msg.Chat.Id,
+                          msg.MessageId,
+                          replyMarkup: inlineMarkup,
+                          parseMode: ParseMode.Html,
+                          caption: caption);
 }
 
 async Task OnCallbackQuieryAdminPost(Update a)
@@ -110,14 +83,10 @@ async Task OnCallbackQuieryAdminPost(Update a)
     var query = a.CallbackQuery!;
     await bot.AnswerCallbackQuery(query.Id);
 
-    var origMsg = query.Message!.ReplyToMessage!;
-
-    var caption = $"<b>#тейк от <a href=\"tg://user?id=\"{origMsg.ForwardFrom!.Id}\"\">{origMsg.ForwardFrom.FirstName}</a></b>";
-            await bot.CopyMessage(apiSection["Channel"]!,
-                                  apiSection["Owner"]!,
-                                  origMsg.MessageId,
-                                  parseMode: ParseMode.Html,
-                                  caption: caption);
+    await bot.CopyMessage(apiSection["Channel"]!,
+                          apiSection["Owner"]!,
+                          query.Message!.MessageId,
+                          replyMarkup: new ReplyKeyboardRemove());
 }
 
 async Task OnCallbackQuieryAdminDeny(Update a)
@@ -125,9 +94,6 @@ async Task OnCallbackQuieryAdminDeny(Update a)
     var query = a.CallbackQuery!;
     await bot.AnswerCallbackQuery(query.Id);
 
-    var origMsg = query.Message!.ReplyToMessage!;
-
-    await bot.DeleteMessage(apiSection["Owner"]!, origMsg.MessageId);
     await bot.DeleteMessage(apiSection["Owner"]!, query.Message!.MessageId);
 }
 
@@ -135,30 +101,10 @@ async Task OnCallbackQuieryAdminEdit(Update a)
 {
     var query = a.CallbackQuery!;
     await bot.AnswerCallbackQuery(query.Id);
-
-    var origMsg = query.Message!.ReplyToMessage!;
 }
 
 async Task OnCallbackQuieryAdminBan(Update a)
 {
     var query = a.CallbackQuery!;
     await bot.AnswerCallbackQuery(query.Id);
-
-    var origMsg = query.Message!.ReplyToMessage!;
-
-    bool lockTaken = false;
-    try
-    {
-        DBSpinlock.Enter(ref lockTaken);
-        var command = DBConnection.CreateCommand();
-        command.CommandText = "INSERT INTO banned VALUES ($tid, $handle, $name);";
-        command.Parameters.AddWithValue("$tid", origMsg.ForwardFrom!.Id);
-        command.Parameters.AddWithValue("$handle", origMsg.ForwardFromChat);
-        command.Parameters.AddWithValue("$name", origMsg.ForwardFrom!.Username);
-        command.ExecuteNonQuery();
-    }
-    finally
-    {
-        if (lockTaken) DBSpinlock.Exit();
-    }
 }
