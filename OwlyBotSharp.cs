@@ -10,39 +10,54 @@ var apiSection = botConfig.GetSection("API");
 var ownerNumber = Int64.Parse(apiSection["Owner"]!);
 
 using var cts = new CancellationTokenSource();
+
 var bot = new TelegramBotClient(apiSection["Token"]!, cancellationToken: cts.Token);
 
-using var er = new EventRouter<TypedUpdate, UpdateType>();
+var handlers = new List<TUpdateHandler>();
 
-er.Add(UpdateType.Message, OnOwnerMessage, (u) => u.Message!.Chat.Id == ownerNumber);
-er.Add(UpdateType.Message, OnUserMessage, (u) => u.Message!.Chat.Id != ownerNumber);
+handlers.Add(new(UpdateType.Message, OnOwnerMessage, (u) => u.Message!.Chat.Id == ownerNumber));
+handlers.Add(new(UpdateType.Message, OnUserMessage, (u) => u.Message!.Chat.Id != ownerNumber));
 
-er.Add(UpdateType.CallbackQuery, OnCallbackQuieryAdminPost,
-       (u) => u.CallbackQuery!.Message!.Chat.Id == ownerNumber && u.CallbackQuery!.Data == "post");
-er.Add(UpdateType.CallbackQuery, OnCallbackQuieryAdminDeny,
-       (u) => u.CallbackQuery!.Message!.Chat.Id == ownerNumber && u.CallbackQuery!.Data == "deny");
-er.Add(UpdateType.CallbackQuery, OnCallbackQuieryAdminEdit,
-       (u) => u.CallbackQuery!.Message!.Chat.Id == ownerNumber && u.CallbackQuery!.Data == "edit");
-er.Add(UpdateType.CallbackQuery, OnCallbackQuieryAdminBan,
-       (u) => u.CallbackQuery!.Message!.Chat.Id == ownerNumber && u.CallbackQuery!.Data == "ban");
+handlers.Add(new(UpdateType.CallbackQuery, OnCallbackQuieryAdminPost,
+       (u) => u.CallbackQuery!.Message!.Chat.Id == ownerNumber && u.CallbackQuery!.Data == "post"));
+handlers.Add(new(UpdateType.CallbackQuery, OnCallbackQuieryAdminDeny,
+       (u) => u.CallbackQuery!.Message!.Chat.Id == ownerNumber && u.CallbackQuery!.Data == "deny"));
+/*
+handlers.Add(new(UpdateType.CallbackQuery, OnCallbackQuieryAdminEdit,
+       (u) => u.CallbackQuery!.Message!.Chat.Id == ownerNumber && u.CallbackQuery!.Data == "edit"));
+*/
+handlers.Add(new(UpdateType.CallbackQuery, OnCallbackQuieryAdminBan,
+       (u) => u.CallbackQuery!.Message!.Chat.Id == ownerNumber && u.CallbackQuery!.Data == "ban"));
 
-er.Start();
+using var ur = new UpdateRouter<TUpdateRunner, TypedUpdate, UpdateType>();
+var runner = new TUpdateRunner();
+
+runner.Run = async (i, o, r) => {
+                var updates = await bot.GetUpdates(((TUpdateRunner)r).offset);
+                foreach (var upd in updates)
+                {
+                    ((TUpdateRunner)r).offset = upd.Id + 1;
+                    TypedUpdate? u;
+                    if (i.TryDequeue(out u))
+                    {
+                        foreach (var h in handlers)
+                        {
+                            if (Equals(h.Type, u.Type) && h.Cond(u))
+                            {
+                                try { await Task.Run(async () => await h.Handler(u)); }
+                                catch (Exception ex) { Console.WriteLine("Handler exited with exception: ", ex); }
+                            }
+                        }
+                    }
+                    if (cts.IsCancellationRequested) break;
+                }
+};
+
+ur.Start(runner);
 
 Console.WriteLine("Bot is running... Press Enter to terminate");
 
-int? offset = null;
-while (!cts.IsCancellationRequested)
-{
-    var updates = await bot.GetUpdates(offset);
-    foreach (var upd in updates)
-    {
-        offset = upd.Id + 1;
-        er.Push((TypedUpdate)upd);
-        if (cts.IsCancellationRequested) break;
-    }
-    if (Console.KeyAvailable)
-        if (Console.ReadKey(true).Key == ConsoleKey.Enter) break;
-}
+Console.ReadLine();
 
 
 
@@ -65,7 +80,7 @@ async Task OnUserMessage(Update a)
     .AddButton("Запостить", "post")
     .AddButton("Отклонить", "deny")
     .AddNewRow()
-    .AddButton("Редактировать", "edit")
+    //.AddButton("Редактировать", "edit")
     .AddButton("Забанить", "ban");
 
     var caption = $"<b>#тейк от <a href=\"tg://user?id=\"{msg.Chat.Id}\"\">{msg.From!.FirstName}</a></b>";
@@ -96,13 +111,13 @@ async Task OnCallbackQuieryAdminDeny(Update a)
 
     await bot.DeleteMessage(apiSection["Owner"]!, query.Message!.MessageId);
 }
-
+/*
 async Task OnCallbackQuieryAdminEdit(Update a)
 {
     var query = a.CallbackQuery!;
     await bot.AnswerCallbackQuery(query.Id);
 }
-
+*/
 async Task OnCallbackQuieryAdminBan(Update a)
 {
     var query = a.CallbackQuery!;
