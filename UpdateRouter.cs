@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 
 namespace Owl
 {
-    sealed class UpdateRouter<R, U, T> : IDisposable where R : UpdateRunner<U, T>, new() where U : IUpdateMsg<T> where T : IComparable
+    sealed class UpdateRouter<R, U, T> : IDisposable where R : UpdateRunner<U, T> where U : IUpdateMsg<T> where T : IComparable
     {
         private CancellationTokenSource TSource;
 
@@ -30,14 +30,16 @@ namespace Owl
         }
 
         public void Start(R runner) => Task.Run(async () => {
-            while (!TSource.IsCancellationRequested)
-                await runner.Run!(((DeniedOutputQueue<U>)Input), ((DeniedInputQueue<U>)Output), runner);
+            runner.TSource = TSource;
+            while (true)
+                await runner.Run(((DeniedOutputQueue<U>)Input), ((DeniedInputQueue<U>)Output));
         });
     }
 
     abstract class UpdateRunner<U, T> where U : IUpdateMsg<T>
     {
-        public Func<DeniedOutputQueue<U>, DeniedInputQueue<U>, UpdateRunner<U, T>, Task>? Run;
+        public CancellationTokenSource? TSource {get; set;}
+        public abstract Task Run(DeniedOutputQueue<U> i, DeniedInputQueue<U> o);
     }
 
     interface IUpdateMsg<T>
@@ -64,7 +66,7 @@ namespace Owl
         new bool TryPeek(out U? u)
         {
             u = default;
-            throw new InvalidOperationException("Trying to pull from the input");
+            throw new InvalidOperationException("Trying to peek from the input");
         }
     }
 }
