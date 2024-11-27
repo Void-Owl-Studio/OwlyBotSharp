@@ -2,49 +2,62 @@ using System.Collections.Concurrent;
 
 namespace Owl
 {
-    sealed class UpdateRouter<R, U, T> : IDisposable where R : UpdateRunner<U, T> where U : IUpdateMsg<T> where T : IComparable
+    sealed class UpdateRouter<R, U> : IDisposable
+        where R : IUpdateRunner<U>
     {
-        private CancellationTokenSource TSource;
 
         private ConcurrentQueue<U> Input, Output;
 
+        public R Runner {private get; set;}
+
+        private IUpdateRunner<U>.RunStarter Starter;
+
+        private event EventHandler? QueueUpdateHandler;
+
         public UpdateRouter()
         {
-            TSource = new();
+            Starter = new(Runner!.Run);
             Input = new();
             Output = new();
         }
 
         public void Dispose()
         {
-            if (!TSource.IsCancellationRequested) TSource.Cancel();
-            TSource.Dispose();
+            if (Starter.GetInvocationList().GetLength(0) == 0)
+                Starter.EndInvoke(null);
+            Runner.Dispose();
         }
 
-        public void Push(U upd) => Input.Enqueue(upd);
+        public void Push(U upd)
+        {
+            Input.Enqueue(upd);
+            if (Starter.GetInvocationList().GetLength(0) == 0)
+                Starter.BeginInvoke(((DeniedOutputQueue<U>)Input), ((DeniedInputQueue<U>)Output), null, null);
+        }
 
-        public U? TryPull() {
+        public U? TryPull()
+        {
             U? o;
             Output.TryDequeue(out o);
             return o;
         }
 
-        public void Start(R runner) => Task.Run(async () => {
-            runner.TSource = TSource;
-            while (true)
-                await runner.Run(((DeniedOutputQueue<U>)Input), ((DeniedInputQueue<U>)Output));
-        });
+        public U? TryPeek()
+        {
+            U? o;
+            Output.TryPeek(out o);
+            return o;
+        }
+
+        public void Start() {
+            Starter.BeginInvoke(((DeniedOutputQueue<U>)Input), ((DeniedInputQueue<U>)Output), null, null);
+        }
     }
 
-    abstract class UpdateRunner<U, T> where U : IUpdateMsg<T>
+    interface IUpdateRunner<U> : IDisposable
     {
-        public CancellationTokenSource? TSource {get; set;}
-        public abstract Task Run(DeniedOutputQueue<U> i, DeniedInputQueue<U> o);
-    }
-
-    interface IUpdateMsg<T>
-    {
-        public T Type => default!;
+        public void Run(DeniedOutputQueue<U> i, DeniedInputQueue<U> o);
+        public delegate void RunStarter(DeniedOutputQueue<U> i, DeniedInputQueue<U> o);
     }
 
     class DeniedInputQueue<U> : ConcurrentQueue<U>
