@@ -24,8 +24,8 @@ handlers.Add(UpdateType.Message,
                      (u) => u.Message!.Chat.Id == ownerNumber),
                  new(OnUserMessage,
                      (u) => {
-                         var t = Task.Run(() => PollQueue(sqlur, Task.CurrentId));
-                         return u.Message!.Chat.Id != ownerNumber && !Banned(t, u.Message!.Chat.Id);
+                         var f = () => PollQueue(sqlur, Task.CurrentId);
+                         return u.Message!.Chat.Id != ownerNumber && !Banned(f, u.Message!.Chat.Id);
                     })
             });
 
@@ -71,8 +71,8 @@ while (!cts.IsCancellationRequested)
             await Task.Factory.StartNew(async () => {
                 try
                 {
-                    var routingTask = Task<ResponceMsg>.Run(() => PollQueue(sqlur, Task.CurrentId));
-                    if (h.Cond(u)) await h.Handler(u, routingTask);
+                    var routingTaskHandler = () => PollQueue(sqlur, Task.CurrentId);
+                    if (h.Cond(u)) await h.Handler(u, routingTaskHandler);
                 }
                 catch (Exception ex)
                 {
@@ -106,11 +106,11 @@ ResponceMsg PollQueue(UpdateRouter<SQLUpdateRunner, AbstractSQLMsg> ur, int? id)
     return r;
 }
 
-bool Banned(Task<ResponceMsg> t, long tid)
+bool Banned(Func<ResponceMsg> f, long tid)
 {
-    t.Start();
-
     var cmdStr = "SELECT EXISTS(SELECT 1 FROM users WHERE tid=$tid AND banned=true);";
+
+    Task<ResponceMsg> t = Task.Run(f);
 
     var batch = new SQLMsgBatch();
     batch.Sender = Task.CurrentId;
@@ -125,7 +125,7 @@ bool Banned(Task<ResponceMsg> t, long tid)
     return exists == 1 ? true : false;
 }
 
-async Task OnOwnerMessage(Update a, Task<ResponceMsg> t)
+async Task OnOwnerMessage(Update a, Func<ResponceMsg> f)
 {
     Message msg = a.Message!;
     switch (msg.Text)
@@ -136,7 +136,7 @@ async Task OnOwnerMessage(Update a, Task<ResponceMsg> t)
     }
 }
 
-async Task OnUserMessage(Update a, Task<ResponceMsg> t)
+async Task OnUserMessage(Update a, Func<ResponceMsg> f)
 {
     Message msg = a.Message!;
 
@@ -174,7 +174,7 @@ async Task OnUserMessage(Update a, Task<ResponceMsg> t)
     sqlur.Enqueue(batch);
 }
 
-async Task OnCallbackQuieryAdminPost(Update a, Task<ResponceMsg> t)
+async Task OnCallbackQuieryAdminPost(Update a, Func<ResponceMsg> f)
 {
     var query = a.CallbackQuery!;
     await bot.AnswerCallbackQuery(query.Id);
@@ -189,7 +189,7 @@ async Task OnCallbackQuieryAdminPost(Update a, Task<ResponceMsg> t)
                            replyMarkup: null);
 }
 
-async Task OnCallbackQuieryAdminPostAnon(Update a, Task<ResponceMsg> t)
+async Task OnCallbackQuieryAdminPostAnon(Update a, Func<ResponceMsg> f)
 {
     var query = a.CallbackQuery!;
     await bot.AnswerCallbackQuery(query.Id);
@@ -208,7 +208,7 @@ async Task OnCallbackQuieryAdminPostAnon(Update a, Task<ResponceMsg> t)
                            caption: caption);
 }
 
-async Task OnCallbackQuieryAdminDeny(Update a, Task<ResponceMsg> t)
+async Task OnCallbackQuieryAdminDeny(Update a, Func<ResponceMsg> f)
 {
     var query = a.CallbackQuery!;
     await bot.AnswerCallbackQuery(query.Id);
@@ -222,12 +222,14 @@ async Task OnCallbackQuieryAdminEdit(Update a)
     await bot.AnswerCallbackQuery(query.Id);
 }
 */
-async Task OnCallbackQuieryAdminBan(Update a, Task<ResponceMsg> t)
+async Task OnCallbackQuieryAdminBan(Update a, Func<ResponceMsg> f)
 {
     var query = a.CallbackQuery!;
     await bot.AnswerCallbackQuery(query.Id);
 
-    t.Start();
+    Task<ResponceMsg> t;
+
+    t= Task.Run(f);
 
     var cmdStr1 = "SELECT tid FROM messages WHERE message=$message;";
 
@@ -242,7 +244,7 @@ async Task OnCallbackQuieryAdminBan(Update a, Task<ResponceMsg> t)
     var tid = (List<List<long>>)t.Result.Obj!;
     var tidUnboxed = tid[0][0];
 
-    t.Start();
+    t = Task.Run(f);
 
     var cmdStr2 = "UPDATE users SET banned=true WHERE tid=$tid;" +
         "SELECT message FROM messages WHERE tid=$tid;" +

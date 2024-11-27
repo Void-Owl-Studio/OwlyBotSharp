@@ -8,7 +8,7 @@ namespace Owl
         private InputOnlyQueue<U> Input;
         private OutputOnlyQueue<U> Output;
 
-        public Task MainTask;
+        public Task? MainTask;
 
         public R? Runner {private get; set;}
 
@@ -16,20 +16,21 @@ namespace Owl
         {
             Input = new();
             Output = new();
-            MainTask = new(() => { Runner!.Run(Input, Output); },
-                           TaskCreationOptions.LongRunning);
         }
 
         public void Dispose()
         {
-            MainTask.Wait(Runner!.Token);
+            if (MainTask is not null)
+                MainTask.Wait(Runner!.Token);
             Runner!.Dispose();
         }
 
         public void Enqueue(U upd)
         {
             Input.Enqueue(upd);
-            if (MainTask.IsCompleted) MainTask.Start();
+            if (MainTask is not null)
+                if (MainTask.IsCompleted)
+                    MainTask = Task.Run( () => { Runner!.Run(Input, Output); });
         }
 
         public U? TryDequeue()
@@ -44,10 +45,6 @@ namespace Owl
             U? o;
             Output.TryPeek(out o);
             return o;
-        }
-
-        public void Start() {
-            MainTask.Start();
         }
     }
 
