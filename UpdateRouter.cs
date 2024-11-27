@@ -3,39 +3,36 @@ using System.Collections.Concurrent;
 namespace Owl
 {
     sealed class UpdateRouter<R, U> : IDisposable
-        where R : IUpdateRunner<U>
+        where R : UpdateRunner<U>
     {
+        private InputOnlyQueue<U> Input;
+        private OutputOnlyQueue<U> Output;
 
-        private ConcurrentQueue<U> Input, Output;
+        public Task MainTask;
 
-        public R Runner {private get; set;}
-
-        private IUpdateRunner<U>.RunStarter Starter;
-
-        private event EventHandler? QueueUpdateHandler;
+        public R? Runner {private get; set;}
 
         public UpdateRouter()
         {
-            Starter = new(Runner!.Run);
             Input = new();
             Output = new();
+            MainTask = new(() => { Runner!.Run(Input, Output); },
+                           TaskCreationOptions.LongRunning);
         }
 
         public void Dispose()
         {
-            if (Starter.GetInvocationList().GetLength(0) == 0)
-                Starter.EndInvoke(null);
-            Runner.Dispose();
+            MainTask.Wait(Runner!.Token);
+            Runner!.Dispose();
         }
 
-        public void Push(U upd)
+        public void Enqueue(U upd)
         {
             Input.Enqueue(upd);
-            if (Starter.GetInvocationList().GetLength(0) == 0)
-                Starter.BeginInvoke(((DeniedOutputQueue<U>)Input), ((DeniedInputQueue<U>)Output), null, null);
+            if (MainTask.IsCompleted) MainTask.Start();
         }
 
-        public U? TryPull()
+        public U? TryDequeue()
         {
             U? o;
             Output.TryDequeue(out o);
@@ -50,17 +47,23 @@ namespace Owl
         }
 
         public void Start() {
-            Starter.BeginInvoke(((DeniedOutputQueue<U>)Input), ((DeniedInputQueue<U>)Output), null, null);
+            MainTask.Start();
         }
     }
 
-    interface IUpdateRunner<U> : IDisposable
+    abstract class UpdateRunner<U> : IDisposable
     {
-        public void Run(DeniedOutputQueue<U> i, DeniedInputQueue<U> o);
-        public delegate void RunStarter(DeniedOutputQueue<U> i, DeniedInputQueue<U> o);
+        protected CancellationTokenSource TSource = new();
+        public CancellationToken Token
+        {
+            private init { Token = TSource.Token; }
+            get { return Token; }
+        }
+        public abstract void Run(InputOnlyQueue<U> i, OutputOnlyQueue<U> o);
+        public virtual void Dispose() => TSource.Dispose();
     }
 
-    class DeniedInputQueue<U> : ConcurrentQueue<U>
+    class OutputOnlyQueue<U> : ConcurrentQueue<U>
     {
         new void Enqueue(U u)
         {
@@ -68,7 +71,7 @@ namespace Owl
         }
     }
 
-    class DeniedOutputQueue<U> : ConcurrentQueue<U>
+    class InputOnlyQueue<U> : ConcurrentQueue<U>
     {
         new bool TryDequeue(out U? u)
         {

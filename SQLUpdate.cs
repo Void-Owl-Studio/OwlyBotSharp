@@ -55,7 +55,7 @@ class SQLMsgBatch : AbstractSQLMsg, IEnumerable
     }
 }
 
-class SQLUpdateRunner : IUpdateRunner<AbstractSQLMsg>
+class SQLUpdateRunner : UpdateRunner<AbstractSQLMsg>
 {
     private SqliteConnection conn;
 
@@ -63,12 +63,12 @@ class SQLUpdateRunner : IUpdateRunner<AbstractSQLMsg>
 
     public SQLUpdateRunner(string conns) => conn = new(conns);
 
-    public void Run(DeniedOutputQueue<AbstractSQLMsg> i, DeniedInputQueue<AbstractSQLMsg> o)
+    public override void Run(InputOnlyQueue<AbstractSQLMsg> i, OutputOnlyQueue<AbstractSQLMsg> o)
     {
-        while (i.Count != 0)
+        while (i.Count > 0 && !TSource.IsCancellationRequested)
         {
             AbstractSQLMsg? msg;
-            if (i.TryDequeue(out msg)) continue;
+            if (!i.TryDequeue(out msg)) continue;
 
             ResponceMsg? responce;
             switch (msg)
@@ -89,7 +89,11 @@ class SQLUpdateRunner : IUpdateRunner<AbstractSQLMsg>
         }
     }
 
-    public void Dispose() => conn.Dispose();
+    public override void Dispose()
+    {
+        conn.Dispose();
+        base.Dispose();
+    }
 
     private ResponceMsg? HandleMsg(SQLMsg msg)
     {
