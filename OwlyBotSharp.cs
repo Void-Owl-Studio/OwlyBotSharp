@@ -44,7 +44,7 @@ handlers.Add(UpdateType.CallbackQuery,
 sqlur.Push(new SQLMsg(SQLActionTypes.OPEN_CONN));
 
 var tstr = "CREATE TABLE IF NOT EXISTS users (tid INTEGER PRIMARY KEY, username TEXT, banned BOOLEAN);" +
-    "CREATE TABLE IF NOT EXISTS messages (message INTEGER PRIMARY KEY, tid INTEGER);";
+    "CREATE TABLE IF NOT EXISTS messages (message INTEGER PRIMARY KEY, tid INTEGER, FOREIGN KEY (tid) REFERENCES users(tid));";
 
 var cb = new SQLMsgBatch();
 cb.Add(new SQLMsg(SQLActionTypes.NEW_COMMAND, tstr));
@@ -74,6 +74,21 @@ while (!cts.IsCancellationRequested)
 
 sqlur.Push(new SQLMsg(SQLActionTypes.CLOSE_CONN));
 
+
+
+ResponceMsg WaitForQueue(int? id)
+{
+    while (true)
+    {
+        var msg = sqlur.TryPeek();
+        if (msg is not null)
+            if(msg.Sender == id)
+            {
+                return (ResponceMsg)sqlur.TryPull()!;
+            }
+    }
+}
+
 bool Banned(long tid)
 {
     var cmdStr = "SELECT EXISTS(SELECT 1 FROM users WHERE tid=$tid AND banned=true);";
@@ -85,17 +100,7 @@ bool Banned(long tid)
     batch.Add(new SQLMsg(SQLActionTypes.EXEC_SCALAR));
     sqlur.Push(batch);
 
-    int exists;
-    while (true)
-    {
-        var msg = sqlur.TryPeek();
-        if (msg is not null)
-            if(msg.Sender == Task.CurrentId)
-            {
-                exists = (int)((ResponceMsg)sqlur.TryPull()!).Obj!;
-                break;
-            }
-    }
+    int exists = (int)WaitForQueue(Task.CurrentId).Obj!;
 
     return exists == 1 ? true : false;
 }
@@ -211,19 +216,8 @@ async Task OnCallbackQuieryAdminBan(Update a)
     batch1.Add(new SQLMsg(SQLActionTypes.EXEC_READER));
     sqlur.Push(batch1);
 
-    List<List<object>> tid;
-    while (true)
-    {
-        var msg = sqlur.TryPeek();
-        if (msg is not null)
-            if(msg.Sender == Task.CurrentId)
-            {
-                tid = ((ResponceMsg)sqlur.TryPull()!).ObjList!;
-                break;
-            }
-    }
-
-    var tidUnboxed = (long)(tid[0][0]!);
+    var tid = (List<List<long>>)WaitForQueue(Task.CurrentId).Obj!;
+    var tidUnboxed = tid[0][0];
 
     var cmdStr2 = "UPDATE users SET banned=true WHERE tid=$tid;" +
         "SELECT message FROM messages WHERE tid=$tid;" +
@@ -236,20 +230,9 @@ async Task OnCallbackQuieryAdminBan(Update a)
     batch2.Add(new SQLMsg(SQLActionTypes.EXEC_READER));
     sqlur.Push(batch2);
 
-    List<List<object>> userMsgs;
-    while (true)
-    {
-        var msg = sqlur.TryPeek();
-        if (msg is not null)
-            if(msg.Sender == Task.CurrentId)
-            {
-                userMsgs = ((ResponceMsg)sqlur.TryPull()!).ObjList!;
-                break;
-            }
-    }
-
+    var userMsgs = (List<List<int>>)WaitForQueue(Task.CurrentId).Obj!;
     var msgsUnboxed = new List<int>();
-    foreach (var row in userMsgs) msgsUnboxed.Add((int)row[0]);
+    foreach (var row in userMsgs) msgsUnboxed.Add(row[0]);
 
     await bot.DeleteMessages(apiSection["Owner"]!, msgsUnboxed);
 }

@@ -23,12 +23,10 @@ abstract class AbstractSQLMsg
 
 class ResponceMsg : AbstractSQLMsg
 {
-    public readonly string? Str;
     public readonly object? Obj;
-    public readonly List<List<object>>? ObjList;
-    public ResponceMsg(string s) => Str = s;
+    public ResponceMsg(string s) => Obj = s;
     public ResponceMsg(object o) => Obj = o;
-    public ResponceMsg(List<List<object>> sl) => ObjList = sl;
+    public ResponceMsg(List<List<object>> sl) => Obj = sl;
 }
 
 class SQLMsg : AbstractSQLMsg
